@@ -1,0 +1,638 @@
+/* JLANCHAT */
+package JLANChat;
+
+/* TO DO: ------------------------------------------------------------------- */
+// - Implement actions for special characters e.g. backspaces etc..
+// - Fix the logout case!
+/* -------------------------------------------------------------------------- */
+/* Changelist (rough) ------------------------------------------------------- */
+// - Added a method to the terminal class to clear the terminal display.
+//      Use terminal.clear(); to do this.
+// -
+/* -------------------------------------------------------------------------- */
+/**
+ *
+ * @authors Christopher Smith, Nathan Steers
+ * @createdate Jan 28, 2011
+ * @version 0.1
+ */
+import java.util.*;
+import java.awt.*;
+import java.awt.event.*;
+import gnu.io.*;
+import java.io.*;
+
+public class JavaLAN {
+    /*                                                          10 Byte
+    START MARKER >> { | Destination | Source | Type | <----- Payload ------> | Check Sum | } << END MARKER
+     *
+     * DESTINATION: User ID at destination station (A-Z)
+     * SOURCE: User ID at source station (A-Z)
+     * PACKET TYPE: L - Login
+     *              X - Logout
+     *              R - Identification response to login packet
+     *              D - Data payload
+     *              Y - ACK
+     *              N - NAK
+     */
+
+    private static char[] rxpacket = new char[16];
+    private static char[] txpacket = new char[16];
+    private static char[] kbdpacket = new char[16];
+    private static char myaddress = 0;
+    private static int pendindex = 0;
+
+    private static void clearPacket(char[] packet) {
+        int i = 0;
+        packet[i++] = '{';
+        packet[i++] = '0';
+        packet[i++] = myaddress;
+        packet[i++] = '0';
+        while (i < 15) {
+            packet[i++] = ' ';
+        }
+        packet[i++] = '}';
+    }
+
+    private static void setCheckSum(char[] packet) {
+        int checksum = 0;
+        for (int i = 0; i < packet.length; i++) {
+            checksum = (char) checksum % 128;
+            packet[14] = (char) checksum;
+        }
+    }
+
+    public static void main(String[] args) {
+        final int LOGIN = 0, ADDRPENDING = 1, MENU = 2, GETADDR = 3, INPUTMESS = 4;
+        final int WAITING = 0, RECEIVING = 1, ARRIVED = 2, DECODING = 3;
+        int kbdcasevalue = LOGIN, rxcasevalue = WAITING, keycount = 4;
+        int ltout = 0;
+        char key = 0;
+        char cRx;
+
+        Term terminal = new Term();
+<<<<<<< .mine
+        SerialPortHandler sio = new SerialPortHandler(SerialPortHandler.COM4);
+=======
+        SerialPortHandler sio = new SerialPortHandler(SerialPortHandler.COM3);
+>>>>>>> .r34
+        Administrator admin = new Administrator();
+
+        terminal.println("JLANChat r0.4\nEnter a desired ID: ");
+
+        while (true) {
+
+            /* (0) KEYBOARD TASK -------------------------------------------- */
+
+            switch (kbdcasevalue) {
+                case LOGIN:
+                    if (terminal.getkbhit()) {
+                        key = Character.toUpperCase(terminal.getChar());
+                        if (key >= 'A' && key <= 'Z') {
+                            myaddress = key;
+                            terminal.println("Chosen ID (unresolved): " + myaddress + "\n");
+                            clearPacket(kbdpacket);
+                            kbdpacket[1] = myaddress;
+                            kbdpacket[2] = myaddress;
+                            kbdpacket[3] = 'L';
+                            setCheckSum(kbdpacket);
+                            if (admin.getPending(myaddress) == 0) {
+                                admin.savePacket(myaddress, kbdpacket);
+                                admin.setPending(myaddress, 1);
+                                admin.setITXD(myaddress, 0);
+                            }
+                            ltout = 0;
+                            kbdcasevalue = ADDRPENDING;
+                        }
+                    }
+                    break;
+                case ADDRPENDING:
+                    if (admin.getLogin(myaddress) == -1) {
+                        String idOkMsg = "Your ID has been set to: " + myaddress;
+                        terminal.println(idOkMsg);
+                        String menuMsg = "Menu:\n"
+                                + "\t(D)estination - choose a destination ID and type a message\n"
+                                + "\t(S)end - send a message after chosing (D)\n"
+                                + "\t(C)ancel - cancel and return to menu after chosing (D)\n"
+                                + "\t(L)ogout - logout from the ring LAN";
+                        terminal.println(menuMsg);
+                        kbdcasevalue = MENU;
+                    } else {
+                        ltout++;
+                        if (ltout > 10000) {
+                            terminal.println("Login operation timed out...\n"
+                                    + "Either ring LAN broken or duplicate login ID");
+                            kbdcasevalue = LOGIN;
+                            admin.setPending(myaddress, 0);
+                            myaddress = 0;
+                        }
+                    }
+                    break;
+                case MENU:
+                    if (terminal.getkbhit()) {
+                        key = Character.toUpperCase(terminal.getChar());
+                        switch (key) {
+                            case 'D':
+                                terminal.println("Destination ID: ");
+                                kbdcasevalue = GETADDR;
+                                break;
+                            case 'S':
+                                if (kbdpacket[1] >= 'A' && kbdpacket[1] <= 'Z') {
+                                    admin.setPending(myaddress, 5);
+                                    clearPacket(kbdpacket);
+                                }
+                                break;
+                            case 'C':
+                                clearPacket(kbdpacket);
+                                break;
+                            case 'L':
+                                terminal.println("\nAre you sure you want to logout? Y/N");
+                                if (terminal.getkbhit()) {
+                                    key = Character.toUpperCase(terminal.getChar());
+                                    switch (key) {
+                                        case 'Y':
+                                            terminal.println("Logging out...");
+                                            clearPacket(kbdpacket);
+                                            kbdpacket[1] = myaddress;
+                                            kbdpacket[2] = myaddress;
+                                            kbdpacket[3] = 'X';
+                                            setCheckSum(kbdpacket);
+                                            if (admin.getPending(myaddress) == 0) {
+                                                admin.savePacket(myaddress, kbdpacket);
+                                                admin.setPending(myaddress, 1);
+                                            }
+                                            admin.resetLogin();
+                                            myaddress = 0;
+                                            kbdcasevalue = LOGIN;
+                                            break;
+                                        case 'N':
+                                            break;
+                                    }
+                                }
+                                break;
+                            default:
+                                break;
+
+                        }
+                    }
+                    break;
+                case GETADDR:
+                    if (terminal.getkbhit()) {
+                        key = Character.toUpperCase(terminal.getChar());
+                        if (admin.getLogin(key) == 0) {
+                            terminal.clear();
+                            terminal.println("Chosen destination not logged in at present\n");
+                            String menuMsg = "Menu:\n"
+                                    + "\t(D)estination - choose a destination ID and type a message\n"
+                                    + "\t(S)end - send a message after chosing (D)\n"
+                                    + "\t(C)ancel - cancel and return to menu after chosing (D)\n"
+                                    + "\t(L)ogout - logout from the ring LAN";
+                            terminal.println(menuMsg);
+                            kbdcasevalue = MENU;
+                        } else {
+                            clearPacket(kbdpacket);
+                            kbdpacket[1] = key;
+                            kbdpacket[3] = 'D';
+                            keycount = 4;
+                            kbdcasevalue = INPUTMESS;
+<<<<<<< .mine
+                            terminal.println("Send to: " + kbdpacket[1]);
+                            terminal.println("Please input a message: \n");
+=======
+                            terminal.println("Send to " + kbdpacket[1]);
+                            terminal.println("Please input a messgae: \n");
+>>>>>>> .r34
+                        }
+                    }
+                    break;
+                case INPUTMESS:
+                    if (terminal.getkbhit()) {
+                        key = terminal.getChar();
+<<<<<<< .mine
+                        if (keycount < 14 && key != '\n') {
+                            if (key == 8) {
+                                kbdpacket[keycount -1] = 0;
+                                keycount--;
+                            } else {
+                                kbdpacket[keycount++] = key;
+                                terminal.putChar(kbdpacket[keycount - 1]);
+                            }
+                        } else {
+                            setCheckSum(kbdpacket);
+                            if (admin.getPending(kbdpacket[1]) == 0) {
+                                admin.savePacket(kbdpacket[1], kbdpacket);
+                                admin.setPending(kbdpacket[1], 1);
+                                String menuMsg = "Menu:\n"
+                                        + "\t(D)estination - choose a destination ID and type a message\n"
+                                        + "\t(S)end - send a message after chosing (D)\n"
+                                        + "\t(C)ancel - cancel and return to menu after chosing (D)\n"
+                                        + "\t(L)ogout - logout from the ring LAN";
+                                terminal.println(menuMsg);
+                                kbdcasevalue = MENU;
+                            }
+=======
+                        if (keycount < 14 && key != '\n') {
+                            kbdpacket[keycount++] = key;
+                            terminal.putChar(kbdpacket[keycount]);
+                        } else {
+                            setCheckSum(kbdpacket);
+                            if (admin.getPending(kbdpacket[1]) == 0) {
+                                admin.savePacket(kbdpacket[1], kbdpacket);
+                                admin.setPending(kbdpacket[1], 1);
+                                String menuMsg = "Menu:\n"
+                                        + "\t(D)estination - choose a destination ID and type a message\n"
+                                        + "\t(S)end - send a message after chosing (D)\n"
+                                        + "\t(C)ancel - cancel and return to menu after chosing (D)\n"
+                                        + "\t(L)ogout - logout from the ring LAN";
+                                terminal.println(menuMsg);
+                                kbdcasevalue = MENU;
+                            }
+>>>>>>> .r34
+                        }
+                    }
+
+                    break;
+
+            }
+            /* (0) END KEYBOARD TASK ---------------------------------------- */
+
+            /* (1) Tx TASK -------------------------------------------------- */
+            if (++pendindex > ('Z' - 'A')) {
+                pendindex = 0;
+            }
+            if (admin.getPending(pendindex) > 0) {
+                if (admin.getITXD(pendindex) > 0) {
+                    admin.decITXD(pendindex);
+                } else {
+                    sio.sendpacket(admin.getPacket(pendindex));
+                    admin.decPending(pendindex);
+                }
+
+            }
+            /* (1) END Tx TASK ---------------------------------------------- */
+
+            /* (2) Rx TASK -------------------------------------------------- */
+            switch (rxcasevalue) {
+                case WAITING:
+                    if (sio.getChar() == '{') {
+                        rxcasevalue = RECEIVING;
+                    }
+                    break;
+                case RECEIVING:
+                    rxpacket[0] = '{';
+                    for (int i = 1; i < 16; i++) {
+                        rxpacket[i] = sio.getChar();
+                    }
+
+                    rxcasevalue = ARRIVED;
+                    break;
+                case ARRIVED:
+                    System.out.print("Packet received: ");
+                    System.out.println(rxpacket);
+                    rxcasevalue = DECODING;
+                    break;
+                case DECODING:
+                    // FROM ME TO ME
+                    if (rxpacket[1] == myaddress) {
+                        if (rxpacket[2] == myaddress) {
+                            switch (rxpacket[3]) {
+
+                                // CASE L (login) - Sets current login to -1 (me)
+                                /* If packet is (really) from another station accidently choosen
+                                a duplicate ID then this station (if already logged in with that
+                                id will think this packet is from itself and harmlessly change
+                                its own ID to -1 (me) and destroy the packet, stopping it from
+                                getting back originating station and preventing ID duplication */
+
+                                case 'L': // login packet from me
+                                    admin.setLogin(myaddress, -1);
+                                    clearPacket(rxpacket);
+                                    rxcasevalue = WAITING;
+                            }
+                        }
+                        if (rxpacket[2] != myaddress) {
+                            switch (rxpacket[3]) {
+
+                                // CASE R (login response) - Response to login packet, read packet update pendtable
+                                case 'R':
+                                    admin.setLogin(rxpacket[2], 1);
+                                    clearPacket(rxpacket);
+                                    rxcasevalue = WAITING;
+                            }
+                        }
+                    }
+                    if (rxpacket[1] != myaddress) {
+                        // FROM SOMEONE ELSE TO SOMEONE ELSE
+                        if (rxpacket[2] != myaddress) {
+                            switch (rxpacket[3]) {
+
+                                // CASE L (login) - Send back out, update pendtable Tx login response
+                                /* NOTE! packets should be saved the pending table rather than directly
+                                sent out -- It doesnt block but something to think about... */
+
+                                case 'L': // login packet from someone else
+                                    admin.savePacket(rxpacket[2], rxpacket);
+                                    admin.setPending(rxpacket[2], 1);
+                                    admin.setLogin(rxpacket[2], 1);
+                                    clearPacket(txpacket);
+                                    if (myaddress != 0) {
+                                        txpacket[1] = myaddress;
+                                        txpacket[2] = rxpacket[2];
+                                        txpacket[3] = 'R';
+                                        admin.savePacket(myaddress, txpacket);
+                                        admin.setPending(myaddress, 1);
+                                    }
+                                    rxcasevalue = WAITING;
+                            }
+                        }
+                        // FROM SOMEONE ELSE TO ME
+                        if (rxpacket[2] == myaddress) {
+                            switch (rxpacket[3]) {
+
+                                // CASE R (login response) - Response to login packet, read packet update pendtable
+                                case 'R':
+                                    admin.setLogin(rxpacket[2], 1);
+                                    clearPacket(rxpacket);
+                                    rxcasevalue = WAITING;
+                            }
+                        }
+                    }
+
+                    break;
+            }
+            /* (2) END Rx TASK ---------------------------------------------- */
+        }
+    }
+}
+
+class SerialPortHandler {
+
+    public static final String COM1 = "COM1", COM2 = "COM2", COM3 = "COM3", COM4 = "COM4", // Common windows COM ports
+            COM7 = "COM7", COM8 = "COM8", // My weird ass windows COM ports using USB-Serial
+            TTYS0 = "/dev/ttyS0", TTYS1 = "/dev/ttyS1", // Linux standard COM1 and COM2
+            TTYUSB0 = "/dev/ttyUSB0", TTYUSB1 = "/dev/ttyUSB1", // Linux standard USB-Serial
+            master = "/dev/ttys001", slave = "/dev/ttys002"; // Emulated OSX Ports
+    private Enumeration portList;
+    private CommPortIdentifier portId;
+    private SerialPort serialPort = null;
+    private OutputStream outputStream;
+    private InputStream inputStream;
+
+    public SerialPortHandler(String comStr) {
+
+        System.out.println();
+        System.out.println("Checking what ports are available:-");
+        portList = CommPortIdentifier.getPortIdentifiers();
+
+        while (portList.hasMoreElements()) {
+            portId = (CommPortIdentifier) portList.nextElement();
+            System.out.print("" + portId.getName());
+            if (portId.getPortType() == CommPortIdentifier.PORT_SERIAL) {
+                if (portId.getName().equals(comStr)) {
+                    try {
+                        serialPort = (SerialPort) portId.open("java lan", 1000);
+                        serialPort.setSerialPortParams(9600, serialPort.DATABITS_8, serialPort.STOPBITS_1, serialPort.PARITY_NONE);
+                        serialPort.enableReceiveThreshold(0);
+                        serialPort.setRTS(true);
+                        serialPort.setDTR(true);
+
+                        outputStream = serialPort.getOutputStream();
+                        inputStream = serialPort.getInputStream();
+
+                        System.out.println(" port set-up...");
+                    } catch (IOException e) {
+                    } catch (UnsupportedCommOperationException e) {
+                        System.out.println(" Unsupported use...");
+                        System.exit(0);
+                    } catch (PortInUseException e) {
+                        System.out.println(" Port in use...");
+                        System.exit(0);
+                    }
+                }
+            }
+            System.out.println();
+        }
+        System.out.println("Finished Checking!");
+        if (serialPort == null) {
+            System.out.println("No " + comStr + " port found...");
+            System.exit(0);
+        }
+    }
+
+    public char getChar() {
+        char b = (char) -1;
+        try {
+            b = (char) inputStream.read();
+        } catch (IOException e) {
+        }
+        return b;
+    }
+
+    public void putChar(char b) {
+        try {
+            outputStream.write(b);
+        } catch (IOException e) {
+        }
+    }
+
+    public int sendpacket(char[] ppacket) {
+        try {
+            for (int i = 0; i < ppacket.length; i++) {
+                outputStream.write(ppacket[i]);
+            }
+            System.out.print("Packet sent: ");
+            System.out.println(ppacket);
+        } catch (IOException e) {
+            System.out.println("PACKET NOT SENT!!! " + ppacket);
+        }
+        return 0;
+    }
+}
+
+class Term extends Frame implements KeyListener, WindowListener, ActionListener {
+
+    private Frame f;
+    private TextArea menu, messages;
+    private char lastChar = 0;
+    private boolean kbhit;
+    Dimension d1 = new Dimension(300, 600);
+    Dimension d2 = new Dimension(600, 600);
+
+    public Term() {
+        setLayout(new BorderLayout());
+        kbhit = false;
+        f = new Frame("JLANCHAT");
+        Font tFont = new Font("Courier", Font.PLAIN, 12);
+        menu = new TextArea();
+        menu.setFont(tFont);
+        menu.addKeyListener(this);
+        menu.setEditable(false);
+        f.addWindowListener(this);
+        menu.setBackground(Color.black);
+        menu.setForeground(Color.white);
+        menu.setPreferredSize(d1);
+
+        messages = new TextArea();
+        messages.setFont(tFont);
+        messages.setEditable(false);
+        f.addWindowListener(this);
+        messages.setBackground(Color.black);
+        messages.setForeground(Color.white);
+        messages.setPreferredSize(d1);
+
+        f.add(menu, BorderLayout.WEST);
+        f.add(messages, BorderLayout.EAST);
+
+        f.setSize(600, 600);
+        f.setMaximumSize(d2);
+        f.setMinimumSize(d2);
+        f.setVisible(true);
+    } //end term contructor
+
+    public void keyPressed(KeyEvent event) {
+    }
+
+    public void keyReleased(KeyEvent event) {
+    }
+
+    public void keyTyped(KeyEvent event) {
+        lastChar = event.getKeyChar();
+        kbhit = true;
+    }
+
+    public void windowActivated(WindowEvent event) {
+    }
+
+    public void windowDeactivated(WindowEvent event) {
+    }
+
+    public void windowDeiconified(WindowEvent event) {
+    }
+
+    public void windowIconified(WindowEvent event) {
+    }
+
+    public void windowClosed(WindowEvent event) {
+    }
+
+    public void windowClosing(WindowEvent event) {
+        dispose();
+        System.exit(0);
+    }
+
+    public void windowOpened(WindowEvent event) {
+    }
+
+    public void windowOpening(WindowEvent event) {
+    }
+
+    public void actionPerformed(ActionEvent event) {
+        System.out.println("I got a call back from " + event.getActionCommand());
+    }
+
+    public void print(String s) {
+        menu.append(s);
+    }
+
+    public void println(String s) {
+        menu.append(s + "\n");
+    }
+
+    public void putChar(char ch) {
+        StringBuffer str = new StringBuffer(" ");
+        str.setCharAt(0, ch);
+        menu.append(str.toString());
+    }
+
+    public boolean getkbhit() {
+        return kbhit;
+    }
+
+    public char getChar() {
+        if (kbhit == true) {
+            kbhit = false;
+            return lastChar;
+        } else {
+            return 0;
+        }
+    }
+
+    // Clears the terminal screen - I put this in to make the cli
+    // look more interactive...
+    public void clear() {
+        menu.setText("");
+    }
+
+    public void printMsg(String s) {
+        messages.append(s + "\n");
+    }
+}//end term class
+
+class Administrator {
+
+    int[] login = new int[26];
+    int[] pending = new int[26];
+    int[] itxd = new int[26];
+    char[][] ppacket = new char[26][16];
+
+    public Administrator() {
+        for (int i = 0; i < login.length; i++) {
+            login[i] = 0;
+            pending[i] = 0;
+            itxd[i] = 0;
+        }
+    }
+
+    public void savePacket(char u, char[] packet) {
+        int ui = u - 'A'; // ui - User Index... A to 0, B to 1, F to 5 etc...
+        for (int i = 0; i < packet.length; i++) {
+            ppacket[ui][i] = packet[i];
+        }
+    }
+
+    public int getLogin(char u) {
+        return login[u - 'A'];
+    }
+
+    public int getPending(char u) {
+        return pending[u - 'A'];
+    }
+
+    public int getPending(int u) {
+        return pending[u];
+    }
+
+    public int getITXD(int u) {
+        return itxd[u];
+    }
+
+    public char[] getPacket(int u) {
+        return ppacket[u];
+    }
+
+    public void setPending(char u, int i) {
+        pending[u - 'A'] = i;
+    }
+
+    public void setITXD(char u, int i) {
+        itxd[u - 'A'] = i;
+    }
+
+    public void setLogin(char u, int i) {
+        login[u - 'A'] = i;
+    }
+
+    public void decPending(int u) {
+        pending[u]--;
+    }
+
+    public void decITXD(int u) {
+        itxd[u]--;
+    }
+
+    public void resetLogin() {
+        for (int i = 0; i < login.length; i++) {
+            login[i] = 0;
+        }
+    }
+}
